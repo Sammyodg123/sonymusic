@@ -1,13 +1,20 @@
 {
   "name": "sony-supervisor-bot",
   "version": "1.0.0",
+  "description": "Sony Music Supervisor Bot Backend - with photo + ID card support",
   "main": "index.js",
-  "scripts": { "start": "node index.js" },
-  "engines": { "node": "18.x" },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": "18.x"
+  },
   "dependencies": {
     "express": "^4.18.2",
     "cors": "^2.8.5",
     "axios": "^1.6.2",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "multer": "^1.4.5-lts.1",
+    "form-data": "^4.0.0"
   }
 }
